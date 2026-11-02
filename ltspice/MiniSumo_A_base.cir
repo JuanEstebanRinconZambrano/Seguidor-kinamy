@@ -1,0 +1,103 @@
+* =====================================================================
+*  MiniSumo_A_base.cir   --  CIRCUITO A (BASE / PLANTILLA PARA CAMBIOS)
+*  Version 1.0  -  2026-10-21
+*  Proyecto: Mini Sumo (ESP32 + 2xN20 + L293D + LiPo 2S)
+*
+*  Objetivo: circuito minimo para validar conceptos y probar cambios.
+*   - Rieles de 5 V y 3.3 V IDEALES (no hay regulador)
+*   - UN solo motor y UN solo medio puente (se replica despues)
+*   - Sensores: HC-SR04 (ECHO), Sharp (ADC), 1 IR de piso
+*   - Todo lo que se puede cambiar esta en las lineas .param
+*
+*  Como usar:  File > Open > MiniSumo_A_base.cir  >  Simulate > Run (icono
+*  del hombrecito corriendo)  >  View > SPICE Error Log (Ctrl+L) para .meas
+* =====================================================================
+
+* ---------------- PARAMETROS EDITABLES -------------------------------
+.param Vbat=7.4          ; 6.0 (vacia) / 7.4 (nominal) / 8.4 (llena)
+.param Rint=80m          ; resistencia interna LiPo 2S
+.param Rm=6 Lm=2m        ; motor N20: R = 6V/1A ; L tipica
+.param Vsat_h=1.1 Vsat_l=0.9 Ron_d=0.5   ; caidas Darlington L293D
+.param duty=0.8 fpwm=20k tr=20n          ; PWM en EN
+.param Recho_top=1.8k Recho_bot=3.3k     ; divisor ECHO HC-SR04
+.param Rsh_top=6.8k Rsh_bot=10k          ; divisor Sharp -> ADC
+.param Rpu=10k                           ; pull-up sensor de piso
+.param Eb=0                              ; fcem motor (0 = stall)
+
+* ---------------- RIELES IDEALES -------------------------------------
+V5   v5   0  5
+V33  v33  0  3.3
+
+* ---------------- BATERIA + POTENCIA ---------------------------------
+Vb     bat   0     {Vbat}
+Rint1  bat   b1    {Rint}
+Lcab   b1    vcc2  150n
+Cbulk  vcc2  c1    470u
+Resr   c1    0     50m
+Cdec   vcc2  0     100n
+Vsup   vcc2  vsup  0            ; sensor de corriente de la alimentacion VCC2
+
+* ---------------- ENTRADA PWM (pin EN del L293D) ---------------------
+Ven_s  en_s  0  PULSE(0 3.3 0 {tr} {tr} {duty/fpwm-2*tr} {1/fpwm})
+Rgpio  en_s  en 40               ; impedancia de salida del GPIO
+Rpd_en en    0  10k              ; pull-down de EN
+Cen    en    0  10p
+
+* ---------------- MEDIO PUENTE L293D (IN1=1, IN2=0: avance) ----------
+Sh     vsup  h1    en 0 SWD      ; Darlington superior (fuente)
+Rh     h1    h2    {Ron_d}
+VsatH  h2    out1  {Vsat_h}
+Sl     out2  l1    en 0 SWD      ; Darlington inferior (sumidero)
+Rl     l1    l2    {Ron_d}
+VsatL  l2    0     {Vsat_l}
+Dh1    out1  vsup  DCL           ; diodos de retorno internos
+Dl1    0     out1  DCL
+Dh2    out2  vsup  DCL
+Dl2    0     out2  DCL
+
+* ---------------- MOTOR N20 (modelo simple R + L + fcem) -------------
+Rmot   out1  m1    {Rm}
+Lmot   m1    m2    {Lm}
+Vemf   m2    out2  {Eb}
+Cmot   out1  out2  100n          ; condensador antirruido en el motor
+
+* ---------------- HC-SR04: divisor de ECHO ---------------------------
+Vecho  echo_i 0    PULSE(0 5 2m 20n 20n 1m 20m)
+Rso    echo_i echo5 100          ; impedancia de salida del sensor
+R1     echo5  echo3 {Recho_top}
+R2     echo3  0     {Recho_bot}
+Cpin   echo3  0     25p
+
+* ---------------- SHARP -> ADC (rampa lenta 0 a 5 V) -----------------
+Vsharp sh    0     PWL(0 0 20m 5)
+R3     sh    adc   {Rsh_top}
+R4     adc   0     {Rsh_bot}
+Cadc   adc   0     100n
+
+* ---------------- SENSOR DE PISO (colector abierto + pull-up) --------
+R5     v33   piso  {Rpu}
+Spiso  piso  0     cpiso 0 SWOC
+Vcpiso cpiso 0     PULSE(0 1 5m 10u 10u 5m 15m)
+Cpiso  piso  0     40p
+
+* ---------------- MODELOS --------------------------------------------
+.model SWD  SW(Ron=1m Roff=1Meg Vt=1.4 Vh=0.1)
+.model SWOC SW(Ron=100 Roff=10Meg Vt=0.5 Vh=0.05)
+.model DCL  D(Is=1n Rs=0.5 Cjo=30p)
+
+* ---------------- ANALISIS -------------------------------------------
+.step param Eb list 0 2.5 4.2       ; stall / carga media / casi vacio
+.tran 0 20m 0 0.5u
+.options plotwinsize=0
+
+* ---------------- MEDICIONES (ver con Ctrl+L) ------------------------
+.meas TRAN Iavg      AVG I(Rmot)       FROM 10m TO 20m
+.meas TRAN Ipk       MAX I(Rmot)       FROM 10m TO 20m
+.meas TRAN Vmot      AVG V(out1,out2)  FROM 10m TO 20m
+.meas TRAN Vsag      MIN V(vcc2)       FROM 10m TO 20m
+.meas TRAN Isup      AVG I(Vsup)       FROM 10m TO 20m
+.meas TRAN Vecho_max MAX V(echo3)
+.meas TRAN Vadc_max  MAX V(adc)
+.meas TRAN Vpiso_hi  MAX V(piso)
+.meas TRAN Vpiso_lo  MIN V(piso)       FROM 6m TO 9m
+.end
